@@ -20,6 +20,7 @@ incremental index**.
 
 After setup, indexing and search work completely offline. Original PDFs stay in
 place and are never modified.
+Caution: Loads a huge amount of dependencies.
 
 ## Common commands
 
