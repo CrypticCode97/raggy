@@ -1,0 +1,13 @@
+.venv/
+node_modules/
+frontend/node_modules/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.tsbuildinfo
+*.sqlite3
+*.faiss
+dist/
+output/
+.playwright-cli/
