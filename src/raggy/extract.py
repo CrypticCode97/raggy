@@ -123,4 +123,3 @@ def chunk_words(layout_blob: bytes, max_words: int = 260, overlap: int = 40) -> 
             break
         start = max(start + 1, end - overlap)
     return chunks
-

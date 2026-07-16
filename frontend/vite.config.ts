@@ -7,4 +7,3 @@ export default defineConfig({
   build: { outDir: '../src/raggy/static', emptyOutDir: true },
   server: { proxy: { '/api': 'http://127.0.0.1:7734' } },
 })
-
