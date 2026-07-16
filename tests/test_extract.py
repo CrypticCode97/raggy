@@ -23,4 +23,3 @@ def test_extract_keeps_page_and_coordinates(tmp_path: Path):
     words = unpack_layout(pages[0].layout)
     assert all(0 <= word["x"] <= 1 and 0 <= word["y"] <= 1 for word in words)
     assert chunk_words(pages[0].layout)[0][0].startswith("Marine fastener")
-

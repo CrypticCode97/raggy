@@ -52,4 +52,3 @@ def test_hybrid_falls_back_to_lexical(tmp_path: Path):
     output = seeded(tmp_path).search("corrosion resistance", "hybrid")
     assert output.results[0]["page_number"] == 182
     assert output.warning == "models offline"
-
