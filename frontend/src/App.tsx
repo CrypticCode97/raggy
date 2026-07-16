@@ -10,11 +10,11 @@ type Mode = 'hybrid' | 'exact' | 'semantic'
 type BoxRect = { x:number; y:number; w:number; h:number }
 type Result = {page_id:number;document_id:number;title:string;path:string;page_number:number;score:number;snippet:string;highlights:BoxRect[];extraction_method:string;warning?:string;pdf_url:string}
 type Source = {id:number;path:string;last_scanned_at?:string}
-type Status = {documents:number;pages:number;ocr_languages:string;models:{device:string;profile:string;loaded:boolean};job?:{id:number;state:string;processed_files:number;total_files:number;current_path?:string}}
+type Status = {documents:number;pages:number;ocr_languages:string;models:{device:string;profile:string;loaded:boolean;error?:string;fallback_reason?:string};semantic?:{state:string;total:number;embedded:number;ready:boolean;error?:string};job?:{id:number;state:string;processed_files:number;total_files:number;current_path?:string}}
 
 async function api<T>(url:string, options?:RequestInit):Promise<T>{
   const response=await fetch(url,{headers:{'Content-Type':'application/json',...options?.headers},...options})
-  if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText}));throw new Error(body.detail||'Request failed')}
+  if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText}));const detail=typeof body.detail==='object'?body.detail.message:body.detail;throw new Error(detail||'Request failed')}
   return response.json()
 }
 
@@ -50,7 +50,7 @@ export function App(){
           {!results.length?<div className="empty"><div><Box size={28}/></div><h3>Original pages, not generated answers</h3><p>Results preserve the document, page number, extraction method, and the exact matching passage.</p><button onClick={()=>setLibraryOpen(true)}><FolderPlus size={17}/> Add document folder</button></div>:
           <div className="results">{results.map((r,i)=><article key={r.page_id} onClick={()=>setSelected(r)}><div className="rank">{String(i+1).padStart(2,'0')}</div><div className="result-body"><div className="docline"><span>{r.extraction_method==='ocr'?'OCR':'PDF'}</span><strong>{r.title}</strong><small>Page {r.page_number}</small></div><p>{r.snippet}</p><div className="path">{r.path}</div>{r.warning&&<div className="warning">{r.warning}</div>}</div><button className="open-page">Open page <ChevronRight size={16}/></button></article>)}</div>}
         </div>
-        <aside><div className="stat"><Cpu size={18}/><div><span>Compute</span><strong>{status?.models.device?.toUpperCase()||'—'} · {status?.models.profile||'—'}</strong></div></div><div className="stat"><BookOpen size={18}/><div><span>Indexed corpus</span><strong>{status?.pages.toLocaleString()||0} pages</strong></div></div><div className="principle"><span>GUIDING PRINCIPLE</span><p>“The system does not answer questions—it finds evidence.”</p></div></aside>
+        <aside><div className="stat"><Cpu size={18}/><div><span>Compute</span><strong>{status?.models.device?.toUpperCase()||'—'} · {status?.models.profile||'—'}</strong>{status?.models.fallback_reason&&<small>{status.models.fallback_reason}</small>}</div></div><div className="stat"><BookOpen size={18}/><div><span>Indexed corpus</span><strong>{status?.pages.toLocaleString()||0} pages</strong></div></div><div className={`stat semantic-state ${status?.semantic?.state==='error'?'has-error':''}`}><LoaderCircle className={status?.semantic?.state==='building'?'spin':''} size={18}/><div><span>Semantic index</span><strong>{status?.semantic?.ready?'Ready':status?.semantic?.state==='error'?'Needs attention':`${status?.semantic?.embedded||0} / ${status?.semantic?.total||0} passages`}</strong>{status?.semantic?.error&&<small>{status.semantic.error}</small>}{status?.semantic?.state==='error'&&<button onClick={()=>setSetupOpen(true)}>Choose a lighter profile</button>}</div></div><div className="principle"><span>GUIDING PRINCIPLE</span><p>“The system does not answer questions—it finds evidence.”</p></div></aside>
       </section>
     </main>
     {selected&&<div className="modal"><PdfViewer result={selected} onClose={()=>setSelected(null)}/></div>}

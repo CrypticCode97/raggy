@@ -7,7 +7,7 @@ from pathlib import Path
 from .config import Settings
 from .db import Database
 from .extract import chunk_words, extract_pdf, sha256_file
-from .models import ModelManager
+from .models import ModelManager, ModelOutOfMemoryError
 from .vectors import VectorIndex
 
 
@@ -19,6 +19,18 @@ class IndexCoordinator:
         self.vectors = vectors
         self._running = threading.Lock()
         self._cancel = threading.Event()
+        self.semantic_state = "idle"
+        self.semantic_error: str | None = None
+        self.semantic_completed = 0
+        self.semantic_total = 0
+
+    def semantic_status(self) -> dict:
+        return {
+            "state": self.semantic_state,
+            "error": self.semantic_error,
+            "completed": self.semantic_completed,
+            "total": self.semantic_total,
+        }
 
     def create_job(self) -> int:
         with self.db.transaction() as conn:
@@ -123,6 +135,8 @@ class IndexCoordinator:
                         conn.executemany("UPDATE passages SET embedding_id=? WHERE id=?", [(pid, pid) for pid in ids])
                 except RuntimeError as exc:
                     semantic_error = str(exc)
+                    self.semantic_state = "error"
+                    self.semantic_error = semantic_error
             with self.db.transaction() as conn:
                 conn.execute("UPDATE documents SET state='indexed', error=?, indexed_at=CURRENT_TIMESTAMP WHERE id=?", (semantic_error, doc_id))
                 conn.execute("UPDATE index_jobs SET processed_files=processed_files+1, indexed_files=indexed_files+1, current_path=? WHERE id=?", (str(path), job_id))
@@ -147,13 +161,24 @@ class IndexCoordinator:
             if not rows:
                 break
             ids = [int(row["id"]) for row in rows]
-            embeddings = self.models.encode([row["text"] for row in rows])
+            try:
+                embeddings = self.models.encode([row["text"] for row in rows])
+            except ModelOutOfMemoryError as exc:
+                self.semantic_state = "error"
+                self.semantic_error = str(exc)
+                with self.db.transaction() as conn:
+                    conn.execute(
+                        "UPDATE documents SET error=? WHERE id=?",
+                        (str(exc), document_id),
+                    )
+                raise
             self.vectors.add(ids, embeddings)
             with self.db.transaction() as conn:
                 conn.executemany(
                     "UPDATE passages SET embedding_id=? WHERE id=?",
                     [(passage_id, passage_id) for passage_id in ids],
                 )
+            self.semantic_completed += len(ids)
         with self.db.transaction() as conn:
             conn.execute(
                 "UPDATE documents SET error=NULL, indexed_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -167,14 +192,35 @@ class IndexCoordinator:
         repaired = 0
         try:
             with self.db.connect() as conn:
+                counts = conn.execute(
+                    "SELECT COUNT(*) total, COUNT(embedding_id) embedded "
+                    "FROM passages WHERE active=1"
+                ).fetchone()
+                self.semantic_total = int(counts["total"])
+                self.semantic_completed = int(counts["embedded"])
                 documents = conn.execute(
                     "SELECT DISTINCT pg.document_id FROM passages p "
                     "JOIN pages pg ON pg.id=p.page_id JOIN documents d ON d.id=pg.document_id "
                     "WHERE p.active=1 AND p.embedding_id IS NULL AND d.active=1"
                 ).fetchall()
+            if not documents:
+                self.semantic_state = "ready" if self.semantic_total else "idle"
+                self.semantic_error = None
+                return 0
+            self.semantic_state = "building"
+            self.semantic_error = None
             for row in documents:
                 self._backfill_document(int(row["document_id"]))
                 repaired += 1
+            self.semantic_state = "ready"
+            return repaired
+        except ModelOutOfMemoryError as exc:
+            self.semantic_state = "error"
+            self.semantic_error = str(exc)
+            return repaired
+        except RuntimeError as exc:
+            self.semantic_state = "error"
+            self.semantic_error = str(exc)
             return repaired
         finally:
             self._running.release()

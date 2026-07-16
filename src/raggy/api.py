@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from .config import Settings
 from .db import Database
 from .indexer import IndexCoordinator
-from .models import ModelManager
+from .models import ModelManager, ModelOutOfMemoryError
 from .search import SearchService
 from .setup_service import SetupCoordinator
 from .vectors import VectorIndex
@@ -81,7 +81,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "SELECT COUNT(*) total, COUNT(embedding_id) embedded FROM passages WHERE active=1"
             ).fetchone()
             job = conn.execute("SELECT * FROM index_jobs ORDER BY id DESC LIMIT 1").fetchone()
-        return {"models": model_status.__dict__ if hasattr(model_status, "__dict__") else {field: getattr(model_status, field) for field in model_status.__slots__}, "documents": counts["documents"], "pages": counts["pages"], "semantic": {"total": semantic["total"], "embedded": semantic["embedded"], "ready": semantic["total"] > 0 and semantic["total"] == semantic["embedded"]}, "job": dict(job) if job else None, "ocr_languages": settings.ocr_languages}
+        semantic_status = indexer.semantic_status()
+        semantic_status.update({"total": semantic["total"], "embedded": semantic["embedded"], "ready": semantic["total"] > 0 and semantic["total"] == semantic["embedded"]})
+        return {"models": model_status.__dict__ if hasattr(model_status, "__dict__") else {field: getattr(model_status, field) for field in model_status.__slots__}, "documents": counts["documents"], "pages": counts["pages"], "semantic": semantic_status, "job": dict(job) if job else None, "ocr_languages": settings.ocr_languages}
 
     @app.get("/api/setup")
     def setup_status():
@@ -146,6 +148,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def run_search(payload: SearchRequest):
         try:
             output = await asyncio.to_thread(search.search, payload.query, payload.mode, payload.page, payload.page_size)
+        except ModelOutOfMemoryError as exc:
+            raise HTTPException(
+                503,
+                {"code": exc.code, "message": str(exc), "recoverable": True},
+            ) from exc
         except RuntimeError as exc:
             raise HTTPException(503, str(exc)) from exc
         return {"query": payload.query, "mode": payload.mode, "page": payload.page, "page_size": payload.page_size, "total": output.total, "took_ms": round(output.took_ms, 2), "warning": output.warning, "results": output.results}
